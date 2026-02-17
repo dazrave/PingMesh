@@ -1,5 +1,5 @@
 # Binaries
-pingmesh
+/pingmesh
 *.exe
 *.dll
 *.so
