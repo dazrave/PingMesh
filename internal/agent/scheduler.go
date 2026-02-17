@@ -11,15 +11,19 @@ import (
 	"github.com/pingmesh/pingmesh/internal/store"
 )
 
+// ResultCallback is called after each check result is stored.
+type ResultCallback func(result *model.CheckResult)
+
 // Scheduler manages periodic execution of monitoring checks.
 type Scheduler struct {
 	store  store.Store
 	nodeID string
 
-	mu       sync.Mutex
-	timers   map[string]*time.Ticker // monitor ID -> ticker
-	cancels  map[string]context.CancelFunc
-	running  map[string]bool // track if a check is currently executing
+	mu             sync.Mutex
+	timers         map[string]*time.Ticker // monitor ID -> ticker
+	cancels        map[string]context.CancelFunc
+	running        map[string]bool // track if a check is currently executing
+	resultCallback ResultCallback
 }
 
 // NewScheduler creates a new check scheduler.
@@ -179,7 +183,17 @@ func (s *Scheduler) executeCheck(ctx context.Context, monitorID string) {
 		log.Printf("[scheduler] failed to store result for %s: %v", monitorID, err)
 	}
 
+	// Invoke result callback (e.g., push result to coordinator)
+	if s.resultCallback != nil {
+		s.resultCallback(result)
+	}
+
 	log.Printf("[check] %s → %s (%.1fms)", monitor.Name, result.Status, result.LatencyMS)
+}
+
+// SetResultCallback sets a callback invoked after each check result is stored.
+func (s *Scheduler) SetResultCallback(fn ResultCallback) {
+	s.resultCallback = fn
 }
 
 // ActiveCount returns the number of actively scheduled monitors.

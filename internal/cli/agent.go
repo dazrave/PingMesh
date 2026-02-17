@@ -52,6 +52,13 @@ func newAgentCmd() *cobra.Command {
 				}
 			}()
 
+			// Start peer API server
+			go func() {
+				if err := apiServer.StartPeer(ctx); err != nil {
+					log.Printf("[api] Peer server error: %v", err)
+				}
+			}()
+
 			// Start agent
 			a := agent.New(cfg, st)
 			return a.Run(ctx)

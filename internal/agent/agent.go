@@ -5,27 +5,51 @@ import (
 	"log"
 	"time"
 
+	"github.com/pingmesh/pingmesh/internal/alert"
 	"github.com/pingmesh/pingmesh/internal/checker"
+	"github.com/pingmesh/pingmesh/internal/cluster"
 	"github.com/pingmesh/pingmesh/internal/config"
+	"github.com/pingmesh/pingmesh/internal/consensus"
+	"github.com/pingmesh/pingmesh/internal/model"
 	"github.com/pingmesh/pingmesh/internal/store"
 )
 
 // Agent is the main runtime that coordinates check scheduling, cluster communication, and API serving.
 type Agent struct {
-	config    *config.Config
-	store     store.Store
-	scheduler *Scheduler
-	startTime time.Time
+	config      *config.Config
+	store       store.Store
+	scheduler   *Scheduler
+	peerClient  *cluster.PeerClient
+	clusterMgr  *cluster.Manager
+	incidentMgr *consensus.IncidentManager
+	alerter     *alert.Dispatcher
+	startTime   time.Time
 }
 
 // New creates a new Agent instance.
 func New(cfg *config.Config, st store.Store) *Agent {
-	return &Agent{
-		config:    cfg,
-		store:     st,
-		scheduler: NewScheduler(st, cfg.NodeID),
-		startTime: time.Now(),
+	a := &Agent{
+		config:      cfg,
+		store:       st,
+		scheduler:   NewScheduler(st, cfg.NodeID),
+		peerClient:  cluster.NewPeerClient(),
+		clusterMgr:  cluster.NewManager(cfg, st),
+		incidentMgr: consensus.NewIncidentManager(st),
+		alerter:     alert.NewDispatcher(),
+		startTime:   time.Now(),
 	}
+
+	// Set up result callback: non-coordinators push results to coordinator
+	if cfg.Role != model.RoleCoordinator && cfg.Coordinator != nil {
+		coordAddr := cfg.Coordinator.Address
+		a.scheduler.SetResultCallback(func(result *model.CheckResult) {
+			if err := a.peerClient.PushResult(coordAddr, result); err != nil {
+				log.Printf("[agent] failed to push result to coordinator: %v", err)
+			}
+		})
+	}
+
+	return a
 }
 
 // Run starts the agent and blocks until the context is cancelled.
@@ -38,14 +62,217 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Start the monitor sync loop
 	go a.syncLoop(ctx)
 
-	// TODO (M3): Start cluster heartbeat loop
-	// TODO (M3): Start peer API server
-	// TODO (M4): Start consensus evaluator
+	// Start cluster loops
+	go a.heartbeatLoop(ctx)
+
+	if a.config.Role == model.RoleCoordinator {
+		go a.offlineDetectionLoop(ctx)
+		go a.configSyncLoop(ctx)
+		go a.consensusLoop(ctx)
+	}
 
 	<-ctx.Done()
 	log.Println("[agent] shutting down...")
 	a.scheduler.Stop()
 	return nil
+}
+
+// heartbeatLoop sends heartbeats every 30s.
+func (a *Agent) heartbeatLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// Send immediately on start
+	a.sendHeartbeat()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.sendHeartbeat()
+		}
+	}
+}
+
+func (a *Agent) sendHeartbeat() {
+	// Update own status locally
+	if err := a.clusterMgr.UpdateHeartbeat(a.config.NodeID); err != nil {
+		log.Printf("[agent] heartbeat self-update error: %v", err)
+	}
+
+	// Non-coordinators send heartbeat to coordinator
+	if a.config.Role != model.RoleCoordinator && a.config.Coordinator != nil {
+		hb := &model.Heartbeat{
+			NodeID:         a.config.NodeID,
+			Timestamp:      time.Now().Format(time.RFC3339),
+			ActiveMonitors: a.scheduler.ActiveCount(),
+		}
+		if err := a.peerClient.SendHeartbeat(a.config.Coordinator.Address, hb); err != nil {
+			log.Printf("[agent] failed to send heartbeat to coordinator: %v", err)
+		}
+	}
+}
+
+// offlineDetectionLoop detects offline nodes every 30s (coordinator only).
+func (a *Agent) offlineDetectionLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := a.clusterMgr.DetectOfflineNodes(90000); err != nil {
+				log.Printf("[agent] offline detection error: %v", err)
+			}
+		}
+	}
+}
+
+// configSyncLoop pushes config to all online nodes every 30s (coordinator only).
+func (a *Agent) configSyncLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.pushConfigSync()
+		}
+	}
+}
+
+func (a *Agent) pushConfigSync() {
+	monitors, err := a.store.ListMonitors("")
+	if err != nil {
+		log.Printf("[agent] config-sync: error loading monitors: %v", err)
+		return
+	}
+
+	nodes, err := a.store.ListNodes()
+	if err != nil {
+		log.Printf("[agent] config-sync: error loading nodes: %v", err)
+		return
+	}
+
+	sync := &model.ConfigSync{
+		Version:  time.Now().UnixMilli(),
+		Monitors: monitors,
+		Nodes:    nodes,
+	}
+
+	for _, n := range nodes {
+		// Skip self and offline nodes
+		if n.ID == a.config.NodeID || n.Status != model.NodeOnline {
+			continue
+		}
+		if err := a.peerClient.PushConfigSync(n.Address, sync); err != nil {
+			log.Printf("[agent] config-sync to %s (%s) failed: %v", n.Name, n.Address, err)
+		}
+	}
+}
+
+// consensusLoop evaluates quorum for incidents every 15s (coordinator only).
+func (a *Agent) consensusLoop(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.evaluateConsensus()
+		}
+	}
+}
+
+func (a *Agent) evaluateConsensus() {
+	monitors, err := a.store.ListEnabledMonitors()
+	if err != nil {
+		log.Printf("[consensus] error loading monitors: %v", err)
+		return
+	}
+
+	onlineNodes, err := a.clusterMgr.GetOnlineNodes()
+	if err != nil {
+		log.Printf("[consensus] error getting online nodes: %v", err)
+		return
+	}
+
+	totalNodes := len(onlineNodes)
+	if totalNodes == 0 {
+		return
+	}
+
+	for _, monitor := range monitors {
+		a.evaluateMonitorConsensus(&monitor, onlineNodes, totalNodes)
+	}
+}
+
+func (a *Agent) evaluateMonitorConsensus(monitor *model.Monitor, onlineNodes []model.Node, totalNodes int) {
+	failCount := 0
+	var failingNodeIDs []string
+
+	for _, node := range onlineNodes {
+		failures, err := a.store.CountConsecutiveFailures(monitor.ID, node.ID)
+		if err != nil {
+			log.Printf("[consensus] error counting failures for monitor=%s node=%s: %v", monitor.ID, node.ID, err)
+			continue
+		}
+		if failures >= monitor.FailureThreshold {
+			failCount++
+			failingNodeIDs = append(failingNodeIDs, node.ID)
+		}
+	}
+
+	quorumMet := consensus.EvaluateQuorum(monitor.QuorumType, monitor.QuorumN, failCount, totalNodes)
+
+	if quorumMet {
+		incident, err := a.incidentMgr.GetOrCreateIncident(monitor.ID)
+		if err != nil {
+			log.Printf("[consensus] error getting/creating incident for monitor %s: %v", monitor.ID, err)
+			return
+		}
+		if incident.Status == model.IncidentSuspect {
+			if err := a.incidentMgr.ConfirmIncident(incident, failingNodeIDs); err != nil {
+				log.Printf("[consensus] error confirming incident %s: %v", incident.ID, err)
+				return
+			}
+			a.alerter.SendAlert(incident, monitor)
+		}
+	} else {
+		// Check if there's an active incident to resolve
+		incident, err := a.store.GetActiveIncident(monitor.ID)
+		if err != nil || incident == nil {
+			return
+		}
+
+		// Count nodes with enough consecutive successes for recovery
+		recoveryCount := 0
+		for _, node := range onlineNodes {
+			successes, err := a.store.CountConsecutiveSuccesses(monitor.ID, node.ID)
+			if err != nil {
+				continue
+			}
+			if successes >= monitor.RecoveryThreshold {
+				recoveryCount++
+			}
+		}
+
+		recoveryQuorumMet := consensus.EvaluateQuorum(monitor.QuorumType, monitor.QuorumN, recoveryCount, totalNodes)
+		if recoveryQuorumMet {
+			if err := a.incidentMgr.ResolveIncident(incident); err != nil {
+				log.Printf("[consensus] error resolving incident %s: %v", incident.ID, err)
+				return
+			}
+			a.alerter.SendRecovery(incident, monitor)
+		}
+	}
 }
 
 func (a *Agent) syncLoop(ctx context.Context) {

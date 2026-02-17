@@ -154,6 +154,23 @@ type JoinToken struct {
 	ExpiresAt       time.Time `json:"expires_at"`
 }
 
+// JoinRequest is sent by a node to the coordinator to join the cluster.
+type JoinRequest struct {
+	Secret     []byte `json:"secret"`
+	Name       string `json:"name"`
+	ListenAddr string `json:"listen_addr"`
+	CLIAddr    string `json:"cli_addr"`
+}
+
+// JoinResponse is returned by the coordinator after a successful join.
+type JoinResponse struct {
+	NodeID        string `json:"node_id"`
+	CACert        string `json:"ca_cert"`
+	NodeCert      string `json:"node_cert"`
+	NodeKey       string `json:"node_key"`
+	CoordinatorID string `json:"coordinator_id"`
+}
+
 // ClusterStatus provides an overview of the cluster state.
 type ClusterStatus struct {
 	NodeID          string     `json:"node_id"`

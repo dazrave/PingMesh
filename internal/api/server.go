@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pingmesh/pingmesh/internal/cluster"
 	"github.com/pingmesh/pingmesh/internal/config"
 	"github.com/pingmesh/pingmesh/internal/store"
 	"github.com/pingmesh/pingmesh/internal/web"
@@ -18,6 +19,7 @@ import (
 type Server struct {
 	config     *config.Config
 	store      store.Store
+	clusterMgr *cluster.Manager
 	cliServer  *http.Server
 	peerServer *http.Server
 }
@@ -25,8 +27,9 @@ type Server struct {
 // NewServer creates a new API server.
 func NewServer(cfg *config.Config, st store.Store) *Server {
 	s := &Server{
-		config: cfg,
-		store:  st,
+		config:     cfg,
+		store:      st,
+		clusterMgr: cluster.NewManager(cfg, st),
 	}
 
 	// CLI API (localhost only)
