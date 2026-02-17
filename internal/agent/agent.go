@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/pingmesh/pingmesh/internal/alert"
@@ -24,6 +25,10 @@ type Agent struct {
 	incidentMgr *consensus.IncidentManager
 	alerter     *alert.Dispatcher
 	startTime   time.Time
+
+	mu             sync.RWMutex
+	lastHeartbeat  time.Time
+	lastConfigSync time.Time
 }
 
 // New creates a new Agent instance.
@@ -69,6 +74,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		go a.offlineDetectionLoop(ctx)
 		go a.configSyncLoop(ctx)
 		go a.consensusLoop(ctx)
+	} else {
+		// Non-coordinators pull config from coordinator
+		go a.configPullLoop(ctx)
 	}
 
 	<-ctx.Done()
@@ -112,6 +120,10 @@ func (a *Agent) sendHeartbeat() {
 			log.Printf("[agent] failed to send heartbeat to coordinator: %v", err)
 		}
 	}
+
+	a.mu.Lock()
+	a.lastHeartbeat = time.Now()
+	a.mu.Unlock()
 }
 
 // offlineDetectionLoop detects offline nodes every 30s (coordinator only).
@@ -174,6 +186,88 @@ func (a *Agent) pushConfigSync() {
 			log.Printf("[agent] config-sync to %s (%s) failed: %v", n.Name, n.Address, err)
 		}
 	}
+
+	a.mu.Lock()
+	a.lastConfigSync = time.Now()
+	a.mu.Unlock()
+}
+
+// configPullLoop pulls config from the coordinator every 30s (non-coordinator only).
+func (a *Agent) configPullLoop(ctx context.Context) {
+	if a.config.Coordinator == nil {
+		return
+	}
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// Pull immediately on start
+	a.pullConfigSync()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.pullConfigSync()
+		}
+	}
+}
+
+func (a *Agent) pullConfigSync() {
+	coordAddr := a.config.Coordinator.Address
+	sync, err := a.peerClient.PullConfigSync(coordAddr)
+	if err != nil {
+		log.Printf("[agent] config-pull from coordinator failed: %v", err)
+		return
+	}
+
+	a.applyConfigSync(sync)
+
+	a.mu.Lock()
+	a.lastConfigSync = time.Now()
+	a.mu.Unlock()
+}
+
+// applyConfigSync merges pulled config into the local store.
+func (a *Agent) applyConfigSync(sync *model.ConfigSync) {
+	for i := range sync.Monitors {
+		m := &sync.Monitors[i]
+		existing, err := a.store.GetMonitor(m.ID)
+		if err != nil {
+			log.Printf("[agent] config-pull: error checking monitor %s: %v", m.ID, err)
+			continue
+		}
+		if existing != nil {
+			if err := a.store.UpdateMonitor(m); err != nil {
+				log.Printf("[agent] config-pull: error updating monitor %s: %v", m.ID, err)
+			}
+		} else {
+			if err := a.store.CreateMonitor(m); err != nil {
+				log.Printf("[agent] config-pull: error creating monitor %s: %v", m.ID, err)
+			}
+		}
+	}
+
+	for i := range sync.Nodes {
+		n := &sync.Nodes[i]
+		existing, err := a.store.GetNode(n.ID)
+		if err != nil {
+			log.Printf("[agent] config-pull: error checking node %s: %v", n.ID, err)
+			continue
+		}
+		if existing != nil {
+			if err := a.store.UpdateNode(n); err != nil {
+				log.Printf("[agent] config-pull: error updating node %s: %v", n.ID, err)
+			}
+		} else {
+			if err := a.store.CreateNode(n); err != nil {
+				log.Printf("[agent] config-pull: error creating node %s: %v", n.ID, err)
+			}
+		}
+	}
+
+	log.Printf("[agent] config-pull applied: %d monitors, %d nodes", len(sync.Monitors), len(sync.Nodes))
 }
 
 // consensusLoop evaluates quorum for incidents every 15s (coordinator only).
@@ -304,6 +398,25 @@ func (a *Agent) syncMonitors() {
 // StartTime returns when the agent was started.
 func (a *Agent) StartTime() time.Time {
 	return a.startTime
+}
+
+// LastHeartbeat returns when the last heartbeat was sent/updated.
+func (a *Agent) LastHeartbeat() time.Time {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.lastHeartbeat
+}
+
+// LastConfigSync returns when config was last synced.
+func (a *Agent) LastConfigSync() time.Time {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.lastConfigSync
+}
+
+// ActiveMonitors returns the number of actively scheduled monitors.
+func (a *Agent) ActiveMonitors() int {
+	return a.scheduler.ActiveCount()
 }
 
 // Scheduler returns the agent's scheduler.

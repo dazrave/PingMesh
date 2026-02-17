@@ -180,15 +180,30 @@ type ClusterStatus struct {
 	ActiveIncidents []Incident `json:"active_incidents"`
 }
 
+// PeerStatus holds the reachability status of a single peer node.
+type PeerStatus struct {
+	NodeID    string  `json:"node_id"`
+	Name      string  `json:"name"`
+	Address   string  `json:"address"`
+	Status    string  `json:"status"`
+	Reachable bool    `json:"reachable"`
+	LatencyMS float64 `json:"latency_ms,omitempty"`
+	Error     string  `json:"error,omitempty"`
+}
+
 // HealthInfo provides local node health information.
 type HealthInfo struct {
-	NodeID        string  `json:"node_id"`
-	Name          string  `json:"name"`
-	Role          string  `json:"role"`
-	Uptime        string  `json:"uptime"`
-	GoVersion     string  `json:"go_version"`
-	NumGoroutines int     `json:"num_goroutines"`
-	MemoryMB      float64 `json:"memory_mb"`
-	DBSizeMB      float64 `json:"db_size_mb"`
-	Coordinator   string  `json:"coordinator,omitempty"`
+	NodeID         string       `json:"node_id"`
+	Name           string       `json:"name"`
+	Role           string       `json:"role"`
+	Uptime         string       `json:"uptime"`
+	GoVersion      string       `json:"go_version"`
+	NumGoroutines  int          `json:"num_goroutines"`
+	MemoryMB       float64      `json:"memory_mb"`
+	DBSizeMB       float64      `json:"db_size_mb"`
+	Coordinator    string       `json:"coordinator,omitempty"`
+	ActiveMonitors int          `json:"active_monitors"`
+	LastHeartbeat  string       `json:"last_heartbeat,omitempty"`
+	LastConfigSync string       `json:"last_config_sync,omitempty"`
+	Peers          []PeerStatus `json:"peers,omitempty"`
 }

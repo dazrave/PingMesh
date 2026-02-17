@@ -1,0 +1,1000 @@
+openapi: 3.0.3
+info:
+  title: PingMesh API
+  description: |
+    REST API for PingMesh — a distributed multi-vantage monitoring system.
+
+    PingMesh deploys lightweight nodes across different networks that run checks
+    (HTTP, TCP, DNS, ICMP) from multiple vantage points and use quorum-based
+    consensus to confirm failures before alerting.
+
+    ## Architecture
+
+    Each PingMesh node exposes two HTTP servers:
+
+    | Server | Default Port | Purpose |
+    |--------|-------------|---------|
+    | **CLI API** | `7434` (localhost) | Management API — this spec documents it |
+    | **Peer API** | `7433` (all interfaces) | Inter-node communication (heartbeats, config sync, result push) |
+
+    ## Authentication
+
+    The CLI API listens on localhost by default and has **no authentication**.
+    If you expose it externally, add a reverse proxy with auth in front of it.
+
+    ## Quick Start
+
+    ```bash
+    # List all monitors
+    curl http://localhost:7434/api/v1/monitors
+
+    # Create an HTTP monitor
+    curl -X POST http://localhost:7434/api/v1/monitors \
+      -H 'Content-Type: application/json' \
+      -d '{"name": "My Website", "check_type": "http", "target": "example.com"}'
+
+    # Check cluster health
+    curl http://localhost:7434/api/v1/health
+    ```
+
+    ## Check Types
+
+    | Type | Description | Required Fields |
+    |------|-------------|-----------------|
+    | `http` | HTTP GET request | `target` (hostname) |
+    | `https` | HTTPS GET request | `target` (hostname) |
+    | `tcp` | TCP connection test | `target`, `port` |
+    | `icmp` | ICMP ping | `target` (IP or hostname) |
+    | `dns` | DNS resolution | `target`, `dns_record_type`, `dns_expected` |
+    | `http_keyword` | HTTP GET + keyword search | `target`, `expected_keyword` |
+
+    ## Defaults
+
+    When creating a monitor, these defaults are applied if not specified:
+
+    | Field | Default |
+    |-------|---------|
+    | `interval_ms` | `60000` (1 minute) |
+    | `timeout_ms` | `5000` (5 seconds) |
+    | `retries` | `1` |
+    | `failure_threshold` | `3` |
+    | `recovery_threshold` | `2` |
+    | `quorum_type` | `"majority"` |
+    | `cooldown_ms` | `300000` (5 minutes) |
+    | `enabled` | `true` |
+
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:7434
+    description: Local CLI API (default)
+  - url: http://{host}:7434
+    description: Custom host
+    variables:
+      host:
+        default: localhost
+
+tags:
+  - name: Monitors
+    description: Create, read, update, and delete monitoring checks
+  - name: Nodes
+    description: View and manage cluster nodes
+  - name: Status
+    description: Cluster status overview and incident tracking
+  - name: Health
+    description: Node health, diagnostics, and peer connectivity
+  - name: Logs
+    description: In-memory log access for remote debugging
+
+paths:
+  # ─── Monitors ──────────────────────────────────────────────────────────
+
+  /api/v1/monitors:
+    get:
+      tags: [Monitors]
+      summary: List monitors
+      description: Returns all monitors, optionally filtered by group name.
+      operationId: listMonitors
+      parameters:
+        - name: group
+          in: query
+          description: Filter by group name (exact match)
+          schema:
+            type: string
+          example: production
+      responses:
+        "200":
+          description: Array of monitors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Monitor"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      tags: [Monitors]
+      summary: Create a monitor
+      description: |
+        Creates a new monitoring check. The server generates the `id`, `created_at`,
+        `updated_at` fields and applies defaults for any omitted optional fields.
+
+        **Minimum required fields:** `name`, `check_type`, `target`
+      operationId: createMonitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MonitorCreate"
+            examples:
+              http:
+                summary: HTTP check
+                value:
+                  name: "My Website"
+                  check_type: "http"
+                  target: "example.com"
+                  interval_ms: 30000
+              tcp:
+                summary: TCP port check
+                value:
+                  name: "Database"
+                  check_type: "tcp"
+                  target: "db.internal"
+                  port: 5432
+                  timeout_ms: 3000
+              dns:
+                summary: DNS resolution check
+                value:
+                  name: "DNS A record"
+                  check_type: "dns"
+                  target: "example.com"
+                  dns_record_type: "A"
+                  dns_expected: "93.184.216.34"
+              keyword:
+                summary: HTTP keyword check
+                value:
+                  name: "Login Page"
+                  check_type: "http_keyword"
+                  target: "app.example.com"
+                  expected_keyword: "Sign In"
+      responses:
+        "201":
+          description: Monitor created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Monitor"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/monitors/{id}:
+    parameters:
+      - $ref: "#/components/parameters/MonitorId"
+
+    get:
+      tags: [Monitors]
+      summary: Get a monitor
+      operationId: getMonitor
+      responses:
+        "200":
+          description: Monitor details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Monitor"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    put:
+      tags: [Monitors]
+      summary: Update a monitor
+      description: |
+        Partially updates a monitor. Only non-zero/non-empty fields in the request
+        body are applied. Fields you omit (or set to zero) are left unchanged.
+
+        **Updatable fields:** `name`, `target`, `port`, `interval_ms`, `timeout_ms`, `group_name`
+      operationId: updateMonitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MonitorUpdate"
+            example:
+              name: "Updated Name"
+              interval_ms: 15000
+      responses:
+        "200":
+          description: Updated monitor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Monitor"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      tags: [Monitors]
+      summary: Delete a monitor
+      operationId: deleteMonitor
+      responses:
+        "200":
+          description: Monitor deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: deleted
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ─── Nodes ─────────────────────────────────────────────────────────────
+
+  /api/v1/nodes:
+    get:
+      tags: [Nodes]
+      summary: List cluster nodes
+      description: Returns all nodes in the cluster with their current status.
+      operationId: listNodes
+      responses:
+        "200":
+          description: Array of nodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Node"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/nodes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/NodeId"
+
+    get:
+      tags: [Nodes]
+      summary: Get a node
+      operationId: getNode
+      responses:
+        "200":
+          description: Node details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      tags: [Nodes]
+      summary: Remove a node from the cluster
+      operationId: deleteNode
+      responses:
+        "200":
+          description: Node deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: deleted
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ─── Status & Incidents ────────────────────────────────────────────────
+
+  /api/v1/status:
+    get:
+      tags: [Status]
+      summary: Cluster status overview
+      description: |
+        Returns a high-level overview of the cluster: this node's identity,
+        all nodes, total monitor count, and any active incidents.
+      operationId: getStatus
+      responses:
+        "200":
+          description: Cluster status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterStatus"
+
+  /api/v1/incidents:
+    get:
+      tags: [Status]
+      summary: List incidents
+      description: Returns incidents. Use `?active=true` to see only unresolved incidents.
+      operationId: listIncidents
+      parameters:
+        - name: active
+          in: query
+          description: If `true`, return only active (non-resolved) incidents
+          schema:
+            type: string
+            enum: ["true", "false"]
+          example: "true"
+      responses:
+        "200":
+          description: Array of incidents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Incident"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/history:
+    get:
+      tags: [Status]
+      summary: Check result history
+      description: |
+        Returns raw check results. All parameters are optional filters.
+        Results are returned newest-first, up to `limit`.
+      operationId: listHistory
+      parameters:
+        - name: monitor
+          in: query
+          description: Filter by monitor ID
+          schema:
+            type: string
+        - name: node
+          in: query
+          description: Filter by node ID
+          schema:
+            type: string
+        - name: since
+          in: query
+          description: Only return results after this Unix timestamp (milliseconds)
+          schema:
+            type: integer
+            format: int64
+          example: 1700000000000
+        - name: limit
+          in: query
+          description: Maximum number of results to return
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+          example: 100
+      responses:
+        "200":
+          description: Array of check results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CheckResult"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ─── Health & Diagnostics ──────────────────────────────────────────────
+
+  /api/v1/health:
+    get:
+      tags: [Health]
+      summary: Node health and peer connectivity
+      description: |
+        Returns detailed health information for this node including runtime
+        metrics, active monitor count, sync timestamps, and a live TCP
+        reachability probe of every peer node.
+      operationId: getHealth
+      responses:
+        "200":
+          description: Health information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthInfo"
+
+  /api/v1/test-peer:
+    get:
+      tags: [Health]
+      summary: Test peer connectivity
+      description: |
+        TCP-dials each peer node (or a specific one) and returns reachability
+        status with latency. Useful for diagnosing network issues.
+      operationId: testPeer
+      parameters:
+        - name: node
+          in: query
+          description: Test only this node ID (omit to test all peers)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of peer statuses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PeerStatus"
+
+  /api/v1/logs:
+    get:
+      tags: [Logs]
+      summary: Recent log entries
+      description: |
+        Returns the most recent log entries from the in-memory ring buffer
+        (capacity: 1000 entries). Entries are returned oldest-first.
+      operationId: getLogs
+      parameters:
+        - name: lines
+          in: query
+          description: Number of log lines to return
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+          example: 50
+      responses:
+        "200":
+          description: Array of log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LogEntry"
+              example:
+                - time: "2026-02-17T22:07:44.844Z"
+                  message: "[agent] starting node abc-123 (prod-us-east) role=coordinator"
+                - time: "2026-02-17T22:07:44.912Z"
+                  message: "[check] Google HTTP → up (66.4ms)"
+        "503":
+          description: Log buffer not available (agent started without log buffer)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Components
+# ═══════════════════════════════════════════════════════════════════════════
+
+components:
+
+  parameters:
+    MonitorId:
+      name: id
+      in: path
+      required: true
+      description: Monitor UUID
+      schema:
+        type: string
+        format: uuid
+      example: "a0373a66-ba17-4e93-985d-a1865890036a"
+
+    NodeId:
+      name: id
+      in: path
+      required: true
+      description: Node UUID
+      schema:
+        type: string
+        format: uuid
+      example: "39b4b59b-437c-4644-8a6a-c8868c42f229"
+
+  responses:
+    BadRequest:
+      description: Invalid request body
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "invalid JSON: unexpected EOF"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "monitor not found"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "database error"
+
+  schemas:
+
+    # ── Monitors ──────────────────────────────────────────────────────────
+
+    Monitor:
+      type: object
+      description: A monitoring check configuration
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier (server-generated)
+          example: "a0373a66-ba17-4e93-985d-a1865890036a"
+        name:
+          type: string
+          description: Human-readable name
+          example: "Google HTTP"
+        group_name:
+          type: string
+          description: Optional group for organizing monitors
+          example: "production"
+        check_type:
+          type: string
+          description: Type of check to perform
+          enum: [icmp, tcp, http, https, dns, http_keyword]
+          example: "http"
+        target:
+          type: string
+          description: |
+            Target to check. For HTTP/HTTPS: hostname without scheme (e.g. `example.com`).
+            For TCP: hostname or IP. For ICMP: IP or hostname. For DNS: domain to resolve.
+          example: "www.google.com"
+        port:
+          type: integer
+          description: Port number (required for TCP checks, optional for HTTP/HTTPS)
+          example: 443
+        interval_ms:
+          type: integer
+          format: int64
+          description: Check interval in milliseconds
+          default: 60000
+          example: 30000
+        timeout_ms:
+          type: integer
+          format: int64
+          description: Timeout per check attempt in milliseconds
+          default: 5000
+          example: 5000
+        retries:
+          type: integer
+          description: Number of attempts before marking as failed
+          default: 1
+          example: 1
+        expected_status:
+          type: integer
+          description: Expected HTTP status code (HTTP/HTTPS checks only)
+          example: 200
+        expected_keyword:
+          type: string
+          description: Keyword to search for in response body (http_keyword check only)
+          example: "Sign In"
+        dns_record_type:
+          type: string
+          description: DNS record type to query (dns check only)
+          enum: [A, AAAA, CNAME, MX, TXT, NS, SOA]
+          example: "A"
+        dns_expected:
+          type: string
+          description: Expected DNS response (dns check only)
+          example: "93.184.216.34"
+        failure_threshold:
+          type: integer
+          description: Consecutive failures before a node reports the target as down
+          default: 3
+          example: 3
+        recovery_threshold:
+          type: integer
+          description: Consecutive successes before a node reports recovery
+          default: 2
+          example: 2
+        quorum_type:
+          type: string
+          description: |
+            How many nodes must agree for consensus.
+            - `majority`: more than half of online nodes
+            - `n_of_m`: at least `quorum_n` nodes
+          enum: [majority, n_of_m]
+          default: "majority"
+          example: "majority"
+        quorum_n:
+          type: integer
+          description: Required agreeing nodes when `quorum_type` is `n_of_m`
+          example: 2
+        cooldown_ms:
+          type: integer
+          format: int64
+          description: Minimum time between repeated alerts for the same monitor (ms)
+          default: 300000
+          example: 300000
+        enabled:
+          type: boolean
+          description: Whether this monitor is active
+          default: true
+          example: true
+        created_at:
+          type: integer
+          format: int64
+          description: Creation timestamp (Unix milliseconds, server-generated)
+          readOnly: true
+          example: 1771364388838
+        updated_at:
+          type: integer
+          format: int64
+          description: Last update timestamp (Unix milliseconds, server-generated)
+          readOnly: true
+          example: 1771364388838
+
+    MonitorCreate:
+      type: object
+      description: Fields for creating a new monitor
+      required: [name, check_type, target]
+      properties:
+        name:
+          type: string
+          description: Human-readable name
+          example: "My Website"
+        group_name:
+          type: string
+          description: Optional group name
+        check_type:
+          type: string
+          enum: [icmp, tcp, http, https, dns, http_keyword]
+          example: "http"
+        target:
+          type: string
+          description: Target hostname or IP (no scheme for HTTP)
+          example: "example.com"
+        port:
+          type: integer
+          description: Port (required for TCP)
+        interval_ms:
+          type: integer
+          format: int64
+          description: "Check interval in ms (default: 60000)"
+        timeout_ms:
+          type: integer
+          format: int64
+          description: "Timeout in ms (default: 5000)"
+        retries:
+          type: integer
+          description: "Retry count (default: 1)"
+        expected_status:
+          type: integer
+          description: Expected HTTP status code
+        expected_keyword:
+          type: string
+          description: Keyword for http_keyword checks
+        dns_record_type:
+          type: string
+          enum: [A, AAAA, CNAME, MX, TXT, NS, SOA]
+        dns_expected:
+          type: string
+        failure_threshold:
+          type: integer
+          description: "Failures before down (default: 3)"
+        recovery_threshold:
+          type: integer
+          description: "Successes before recovery (default: 2)"
+        quorum_type:
+          type: string
+          enum: [majority, n_of_m]
+          description: "Consensus mode (default: majority)"
+        quorum_n:
+          type: integer
+          description: Required nodes for n_of_m quorum
+        cooldown_ms:
+          type: integer
+          format: int64
+          description: "Alert cooldown in ms (default: 300000)"
+
+    MonitorUpdate:
+      type: object
+      description: |
+        Partial update — only non-zero/non-empty fields are applied.
+        Omitted fields remain unchanged.
+      properties:
+        name:
+          type: string
+        group_name:
+          type: string
+        target:
+          type: string
+        port:
+          type: integer
+        interval_ms:
+          type: integer
+          format: int64
+        timeout_ms:
+          type: integer
+          format: int64
+
+    # ── Nodes ─────────────────────────────────────────────────────────────
+
+    Node:
+      type: object
+      description: A cluster member
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "39b4b59b-437c-4644-8a6a-c8868c42f229"
+        name:
+          type: string
+          example: "prod-us-east"
+        location:
+          type: string
+          description: Free-text location label
+          example: "US East"
+        address:
+          type: string
+          description: "host:port for peer API"
+          example: "192.168.0.144:7433"
+        role:
+          type: string
+          enum: [coordinator, node]
+          example: "coordinator"
+        status:
+          type: string
+          enum: [online, offline, suspect]
+          example: "online"
+        last_seen:
+          type: integer
+          format: int64
+          description: Last heartbeat timestamp (Unix milliseconds)
+          example: 1771366110000
+        created_at:
+          type: integer
+          format: int64
+          description: When the node joined (Unix milliseconds)
+          example: 1771364388000
+
+    # ── Check Results ─────────────────────────────────────────────────────
+
+    CheckResult:
+      type: object
+      description: Result of a single check execution
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Auto-increment ID
+        monitor_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+          description: Which node ran this check
+        status:
+          type: string
+          enum: [up, down, degraded]
+          example: "up"
+        latency_ms:
+          type: number
+          format: double
+          description: Check latency in milliseconds
+          example: 66.4
+        status_code:
+          type: integer
+          description: HTTP status code (HTTP/HTTPS checks only)
+          example: 200
+        error:
+          type: string
+          description: Error message if the check failed
+        details:
+          description: Additional check-specific details (JSON)
+        timestamp:
+          type: integer
+          format: int64
+          description: When the check ran (Unix milliseconds)
+          example: 1771366110000
+
+    # ── Incidents ─────────────────────────────────────────────────────────
+
+    Incident:
+      type: object
+      description: |
+        A detected outage. Lifecycle: `suspect` → `confirmed` → `resolved`.
+        Created when failure quorum is first met, confirmed when sustained,
+        resolved when recovery quorum is met.
+      properties:
+        id:
+          type: string
+          format: uuid
+        monitor_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [suspect, confirmed, resolved]
+          example: "confirmed"
+        started_at:
+          type: integer
+          format: int64
+          description: When the incident was first detected (Unix ms)
+        confirmed_at:
+          type: integer
+          format: int64
+          description: When quorum confirmed the incident (Unix ms)
+        resolved_at:
+          type: integer
+          format: int64
+          description: When recovery quorum was met (Unix ms)
+        confirming_nodes:
+          type: array
+          items:
+            type: string
+          description: Node IDs that reported failures
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+
+    # ── Cluster Status ────────────────────────────────────────────────────
+
+    ClusterStatus:
+      type: object
+      description: High-level cluster overview
+      properties:
+        node_id:
+          type: string
+          format: uuid
+          description: This node's ID
+        role:
+          type: string
+          enum: [coordinator, node]
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Node"
+        monitor_count:
+          type: integer
+          description: Total number of monitors
+          example: 5
+        active_incidents:
+          type: array
+          items:
+            $ref: "#/components/schemas/Incident"
+
+    # ── Health ────────────────────────────────────────────────────────────
+
+    HealthInfo:
+      type: object
+      description: Detailed node health with runtime metrics and peer connectivity
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "prod-us-east"
+        role:
+          type: string
+          enum: [coordinator, node]
+        uptime:
+          type: string
+          description: Human-readable uptime (e.g. "2h15m30s")
+          example: "2h15m30s"
+        go_version:
+          type: string
+          example: "go1.23.6"
+        num_goroutines:
+          type: integer
+          example: 18
+        memory_mb:
+          type: number
+          format: double
+          description: Allocated heap memory in MB
+          example: 1.2
+        db_size_mb:
+          type: number
+          format: double
+          description: SQLite database file size in MB
+          example: 0.25
+        coordinator:
+          type: string
+          description: "Coordinator address (non-coordinator nodes only)"
+          example: "192.168.0.144:7433"
+        active_monitors:
+          type: integer
+          description: Number of monitors being actively checked
+          example: 3
+        last_heartbeat:
+          type: string
+          format: date-time
+          description: When the last heartbeat was sent/received
+          example: "2026-02-17T22:07:44Z"
+        last_config_sync:
+          type: string
+          format: date-time
+          description: When config was last synced (push or pull)
+          example: "2026-02-17T22:08:14Z"
+        peers:
+          type: array
+          description: Live TCP reachability probe of every peer node
+          items:
+            $ref: "#/components/schemas/PeerStatus"
+
+    PeerStatus:
+      type: object
+      description: Reachability status of a single peer node
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "node1"
+        address:
+          type: string
+          example: "192.168.0.241:7433"
+        status:
+          type: string
+          enum: [online, offline, suspect]
+          description: Last known status from the database
+        reachable:
+          type: boolean
+          description: Whether a TCP connection succeeded right now
+          example: true
+        latency_ms:
+          type: number
+          format: double
+          description: TCP dial latency in milliseconds (only if reachable)
+          example: 0.098
+        error:
+          type: string
+          description: Error message if unreachable
+
+    # ── Logs ──────────────────────────────────────────────────────────────
+
+    LogEntry:
+      type: object
+      description: A single log line from the in-memory ring buffer
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: When the log entry was written
+          example: "2026-02-17T22:07:44.844Z"
+        message:
+          type: string
+          description: Log message content
+          example: "[check] Google HTTP → up (66.4ms)"
+
+    # ── Common ────────────────────────────────────────────────────────────
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+      required: [error]
+
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Operation result
+          example: "deleted"

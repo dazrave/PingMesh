@@ -77,6 +77,27 @@ func (c *PeerClient) Join(addr string, req *model.JoinRequest) (*model.JoinRespo
 	return &joinResp, nil
 }
 
+// PullConfigSync fetches the current config from the coordinator (pull-based sync).
+func (c *PeerClient) PullConfigSync(addr string) (*model.ConfigSync, error) {
+	url := fmt.Sprintf("http://%s/api/v1/peer/config-sync", addr)
+	resp, err := c.client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("GET config-sync: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GET config-sync returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var sync model.ConfigSync
+	if err := json.NewDecoder(resp.Body).Decode(&sync); err != nil {
+		return nil, fmt.Errorf("decoding config-sync: %w", err)
+	}
+	return &sync, nil
+}
+
 func (c *PeerClient) postJSON(addr, path string, v any) error {
 	body, err := json.Marshal(v)
 	if err != nil {

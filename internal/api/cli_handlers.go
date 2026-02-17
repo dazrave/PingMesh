@@ -1,7 +1,11 @@
 package api
 
 import (
+	"fmt"
+	"net"
 	"net/http"
+	"os"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -31,6 +35,12 @@ func (s *Server) registerCLIRoutes(mux *http.ServeMux) {
 
 	// Health
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
+
+	// Logs
+	mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
+
+	// Peer connectivity test
+	mux.HandleFunc("GET /api/v1/test-peer", s.handleTestPeer)
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
@@ -259,10 +269,113 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
 	health := model.HealthInfo{
-		NodeID: s.config.NodeID,
-		Name:   s.config.NodeName,
-		Role:   s.config.Role,
+		NodeID:        s.config.NodeID,
+		Name:          s.config.NodeName,
+		Role:          s.config.Role,
+		GoVersion:     runtime.Version(),
+		NumGoroutines: runtime.NumGoroutine(),
+		MemoryMB:      float64(memStats.Alloc) / 1024 / 1024,
 	}
+
+	// DB size
+	if fi, err := os.Stat(s.config.DBPath()); err == nil {
+		health.DBSizeMB = float64(fi.Size()) / 1024 / 1024
+	}
+
+	// Agent-provided info (uptime, monitors, timestamps)
+	if ai := s.agentInfo; ai != nil {
+		health.Uptime = time.Since(ai.StartTime()).Truncate(time.Second).String()
+		health.ActiveMonitors = ai.ActiveMonitors()
+		if t := ai.LastHeartbeat(); !t.IsZero() {
+			health.LastHeartbeat = t.Format(time.RFC3339)
+		}
+		if t := ai.LastConfigSync(); !t.IsZero() {
+			health.LastConfigSync = t.Format(time.RFC3339)
+		}
+	}
+
+	// Coordinator info
+	if s.config.Coordinator != nil {
+		health.Coordinator = s.config.Coordinator.Address
+	}
+
+	// Peer connectivity
+	health.Peers = s.probePeers("")
+
 	writeJSON(w, http.StatusOK, health)
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if s.logBuf == nil {
+		writeError(w, http.StatusServiceUnavailable, "log buffer not available")
+		return
+	}
+
+	n := 100
+	if v := r.URL.Query().Get("lines"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			n = parsed
+		}
+	}
+
+	entries := s.logBuf.Last(n)
+	if entries == nil {
+		writeJSON(w, http.StatusOK, []struct{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (s *Server) handleTestPeer(w http.ResponseWriter, r *http.Request) {
+	filterNode := r.URL.Query().Get("node")
+	peers := s.probePeers(filterNode)
+	writeJSON(w, http.StatusOK, peers)
+}
+
+// probePeers TCP-dials each peer and returns reachability status.
+// If filterNode is non-empty, only that node ID is tested.
+func (s *Server) probePeers(filterNode string) []model.PeerStatus {
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		return nil
+	}
+
+	var peers []model.PeerStatus
+	for _, n := range nodes {
+		if n.ID == s.config.NodeID {
+			continue
+		}
+		if filterNode != "" && n.ID != filterNode {
+			continue
+		}
+
+		ps := model.PeerStatus{
+			NodeID:  n.ID,
+			Name:    n.Name,
+			Address: n.Address,
+			Status:  n.Status,
+		}
+
+		start := time.Now()
+		conn, err := net.DialTimeout("tcp", n.Address, 3*time.Second)
+		if err != nil {
+			ps.Reachable = false
+			ps.Error = fmt.Sprintf("dial: %v", err)
+		} else {
+			ps.Reachable = true
+			ps.LatencyMS = float64(time.Since(start).Microseconds()) / 1000
+			conn.Close()
+		}
+
+		peers = append(peers, ps)
+	}
+
+	if peers == nil {
+		peers = []model.PeerStatus{}
+	}
+	return peers
 }

@@ -16,6 +16,7 @@ func (s *Server) registerPeerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/peer/check", s.handlePeerCheck)
 	mux.HandleFunc("POST /api/v1/peer/heartbeat", s.handlePeerHeartbeat)
 	mux.HandleFunc("POST /api/v1/peer/config-sync", s.handlePeerConfigSync)
+	mux.HandleFunc("GET /api/v1/peer/config-sync", s.handlePeerConfigSyncPull)
 	mux.HandleFunc("POST /api/v1/peer/join", s.handlePeerJoin)
 	mux.HandleFunc("POST /api/v1/peer/result", s.handlePeerResult)
 }
@@ -179,6 +180,32 @@ func (s *Server) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 		CoordinatorID: s.config.NodeID,
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handlePeerConfigSyncPull serves the current config to nodes that pull (GET).
+func (s *Server) handlePeerConfigSyncPull(w http.ResponseWriter, r *http.Request) {
+	if s.config.Role != model.RoleCoordinator {
+		writeError(w, http.StatusForbidden, "only the coordinator serves config-sync")
+		return
+	}
+
+	monitors, err := s.store.ListMonitors("")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "loading monitors: "+err.Error())
+		return
+	}
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "loading nodes: "+err.Error())
+		return
+	}
+
+	sync := model.ConfigSync{
+		Version:  time.Now().UnixMilli(),
+		Monitors: monitors,
+		Nodes:    nodes,
+	}
+	writeJSON(w, http.StatusOK, sync)
 }
 
 // handlePeerResult handles a check result pushed from a peer node.

@@ -31,6 +31,8 @@ func NewRootCmd() *cobra.Command {
 		newIncidentsCmd(),
 		newHistoryCmd(),
 		newHealthCmd(),
+		newLogsCmd(),
+		newTestPeerCmd(),
 		newAgentCmd(),
 	)
 

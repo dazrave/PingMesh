@@ -11,25 +11,53 @@ import (
 
 	"github.com/pingmesh/pingmesh/internal/cluster"
 	"github.com/pingmesh/pingmesh/internal/config"
+	"github.com/pingmesh/pingmesh/internal/logbuf"
 	"github.com/pingmesh/pingmesh/internal/store"
 	"github.com/pingmesh/pingmesh/internal/web"
 )
+
+// AgentInfo provides runtime metrics from the agent without circular imports.
+type AgentInfo interface {
+	StartTime() time.Time
+	LastHeartbeat() time.Time
+	LastConfigSync() time.Time
+	ActiveMonitors() int
+}
+
+// ServerOption configures the Server.
+type ServerOption func(*Server)
+
+// WithLogBuffer attaches a log ring buffer for the /api/v1/logs endpoint.
+func WithLogBuffer(buf *logbuf.Buffer) ServerOption {
+	return func(s *Server) { s.logBuf = buf }
+}
+
+// WithAgentInfo attaches agent runtime info for the health endpoint.
+func WithAgentInfo(ai AgentInfo) ServerOption {
+	return func(s *Server) { s.agentInfo = ai }
+}
 
 // Server provides the HTTP API for both CLI commands and peer communication.
 type Server struct {
 	config     *config.Config
 	store      store.Store
 	clusterMgr *cluster.Manager
+	logBuf     *logbuf.Buffer
+	agentInfo  AgentInfo
 	cliServer  *http.Server
 	peerServer *http.Server
 }
 
 // NewServer creates a new API server.
-func NewServer(cfg *config.Config, st store.Store) *Server {
+func NewServer(cfg *config.Config, st store.Store, opts ...ServerOption) *Server {
 	s := &Server{
 		config:     cfg,
 		store:      st,
 		clusterMgr: cluster.NewManager(cfg, st),
+	}
+
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	// CLI API (localhost only)
