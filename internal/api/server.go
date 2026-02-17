@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/pingmesh/pingmesh/internal/config"
 	"github.com/pingmesh/pingmesh/internal/store"
+	"github.com/pingmesh/pingmesh/internal/web"
 )
 
 // Server provides the HTTP API for both CLI commands and peer communication.
@@ -30,6 +32,12 @@ func NewServer(cfg *config.Config, st store.Store) *Server {
 	// CLI API (localhost only)
 	cliMux := http.NewServeMux()
 	s.registerCLIRoutes(cliMux)
+
+	// Serve embedded web dashboard (catch-all — API routes take priority)
+	if staticFS, err := web.StaticFS(); err == nil {
+		cliMux.Handle("/", spaHandler(staticFS))
+	}
+
 	s.cliServer = &http.Server{
 		Handler:      cliMux,
 		ReadTimeout:  10 * time.Second,
@@ -103,4 +111,30 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func readJSON(r *http.Request, v any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// spaHandler serves static files from the embedded FS. For paths that don't
+// match a real file, it serves index.html to support client-side routing.
+func spaHandler(root fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(root))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Try to serve the file directly
+		path := r.URL.Path
+		if path == "/" {
+			path = "index.html"
+		} else {
+			// Strip leading slash for fs.Open
+			path = path[1:]
+		}
+
+		// Check if the file exists in the embedded FS
+		if _, err := fs.Stat(root, path); err == nil {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// Fall back to index.html for SPA client-side routing
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
+	})
 }

@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PingMesh Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body x-data x-init="$store.app.init()">
+
+  <!-- Mobile Top Bar -->
+  <div class="topbar">
+    <button class="topbar-burger" @click="$store.app.toggleSidebar()">&#9776;</button>
+    <h2>PingMesh</h2>
+  </div>
+
+  <!-- Sidebar Overlay (mobile) -->
+  <div class="sidebar-overlay" :class="{ open: $store.app.sidebarOpen }" @click="$store.app.closeSidebar()"></div>
+
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <nav class="sidebar" :class="{ open: $store.app.sidebarOpen }">
+      <div class="sidebar-brand">
+        <img src="/img/favicon.svg" alt="PingMesh">
+        <h1>PingMesh</h1>
+      </div>
+      <div class="sidebar-nav">
+        <a href="#dashboard" :class="{ active: $store.app.page === 'dashboard' }">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          Dashboard
+        </a>
+        <a href="#monitors" :class="{ active: $store.app.page === 'monitors' }">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 6v6l4 2"/></svg>
+          Monitors
+        </a>
+        <a href="#nodes" :class="{ active: $store.app.page === 'nodes' }">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1" fill="currentColor"/><circle cx="6" cy="18" r="1" fill="currentColor"/></svg>
+          Nodes
+        </a>
+        <a href="#incidents" :class="{ active: $store.app.page === 'incidents' }">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Incidents
+        </a>
+        <a href="#history" :class="{ active: $store.app.page === 'history' }">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          History
+        </a>
+      </div>
+      <div class="sidebar-footer">PingMesh Monitoring</div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+      <!-- ═══════════════ DASHBOARD ═══════════════ -->
+      <div x-show="$store.app.page === 'dashboard'" x-data="dashboardPage()" x-init="init()" x-effect="if ($store.app.page !== 'dashboard') destroy()">
+        <div class="page-header">
+          <h2>Dashboard</h2>
+          <p class="text-secondary">Cluster overview</p>
+        </div>
+
+        <!-- Loading -->
+        <template x-if="loading">
+          <div class="loading-center"><span class="spinner"></span> Loading...</div>
+        </template>
+
+        <template x-if="!loading">
+          <div>
+            <!-- Incident Alert Banners -->
+            <template x-if="confirmedIncidents.length > 0">
+              <div class="alert-banner danger">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span x-text="confirmedIncidents.length + ' confirmed incident' + (confirmedIncidents.length > 1 ? 's' : '')"></span>
+              </div>
+            </template>
+            <template x-if="suspectIncidents.length > 0 && confirmedIncidents.length === 0">
+              <div class="alert-banner warning">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span x-text="suspectIncidents.length + ' suspect incident' + (suspectIncidents.length > 1 ? 's' : '')"></span>
+              </div>
+            </template>
+
+            <!-- Stats Cards -->
+            <div class="grid-stats">
+              <div class="card">
+                <div class="card-label">Node</div>
+                <div class="card-value" x-text="health?.name || '—'" style="font-size:1.2rem"></div>
+                <div class="text-secondary" x-text="health?.node_id?.substring(0,8) + '...' || ''"></div>
+              </div>
+              <div class="card">
+                <div class="card-label">Role</div>
+                <div class="card-value" x-text="health?.role || '—'" style="font-size:1.2rem; text-transform:capitalize"></div>
+              </div>
+              <div class="card">
+                <div class="card-label">Nodes</div>
+                <div class="card-value">
+                  <span x-text="onlineNodes"></span><span class="text-secondary" style="font-size:1rem" x-text="'/' + totalNodes"></span>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-label">Monitors</div>
+                <div class="card-value" x-text="status?.monitor_count || 0"></div>
+              </div>
+              <div class="card">
+                <div class="card-label">Active Incidents</div>
+                <div class="card-value" :style="incidentCount > 0 ? 'color:var(--status-down)' : ''" x-text="incidentCount"></div>
+              </div>
+              <div class="card">
+                <div class="card-label">Uptime</div>
+                <div class="card-value" x-text="health?.uptime || '—'" style="font-size:1.1rem"></div>
+              </div>
+              <div class="card">
+                <div class="card-label">Memory</div>
+                <div class="card-value" x-text="health?.memory_mb ? health.memory_mb.toFixed(1) + ' MB' : '—'" style="font-size:1.1rem"></div>
+              </div>
+              <div class="card">
+                <div class="card-label">DB Size</div>
+                <div class="card-value" x-text="health?.db_size_mb ? health.db_size_mb.toFixed(2) + ' MB' : '—'" style="font-size:1.1rem"></div>
+              </div>
+            </div>
+
+            <!-- Node Status Grid -->
+            <template x-if="status?.nodes?.length > 0">
+              <div>
+                <h3 class="mb-4">Node Status</h3>
+                <div class="grid-cards">
+                  <template x-for="node in status.nodes" :key="node.id">
+                    <div class="card">
+                      <div class="flex-between">
+                        <div>
+                          <strong x-text="node.name"></strong>
+                          <span class="badge" :class="'badge-' + node.role" x-text="node.role" style="margin-left:6px"></span>
+                        </div>
+                        <span class="badge" :class="'badge-' + node.status" x-text="node.status"></span>
+                      </div>
+                      <div class="text-secondary" style="margin-top:8px; font-size:0.85rem">
+                        <div x-text="node.address || 'no address'"></div>
+                        <div x-text="node.location || ''"></div>
+                        <div x-text="'Last seen: ' + relativeTime(node.last_seen)"></div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            <!-- Recent Checks -->
+            <template x-if="recentChecks.length > 0">
+              <div class="card">
+                <div class="card-header">
+                  <h3>Recent Checks</h3>
+                </div>
+                <div class="table-wrap">
+                  <table class="responsive">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>Monitor</th>
+                        <th>Status</th>
+                        <th>Latency</th>
+                        <th>Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="r in recentChecks" :key="r.id">
+                        <tr>
+                          <td data-label="Time" x-text="relativeTime(r.timestamp)"></td>
+                          <td data-label="Monitor" x-text="$store.app.monitorName(r.monitor_id)"></td>
+                          <td data-label="Status"><span class="badge" :class="statusBadgeClass(r.status)" x-text="r.status"></span></td>
+                          <td data-label="Latency" class="mono" :class="latencyClass(r.latency_ms)" x-text="r.latency_ms.toFixed(1) + ' ms'"></td>
+                          <td data-label="Error" class="text-secondary truncate" style="max-width:200px" x-text="r.error || '—'"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- ═══════════════ MONITORS ═══════════════ -->
+      <div x-show="$store.app.page === 'monitors'" x-data="monitorsPage()" x-init="init()" x-effect="if ($store.app.page !== 'monitors') destroy()">
+        <div class="page-header">
+          <h2>Monitors</h2>
+          <p class="text-secondary">Manage monitoring checks</p>
+        </div>
+
+        <div class="toolbar">
+          <div class="inline-flex gap-3">
+            <select class="form-control" x-model="groupFilter" @change="loading=true; refresh()" style="width:auto; min-width:140px">
+              <option value="">All Groups</option>
+              <template x-for="g in groups" :key="g">
+                <option :value="g" x-text="g"></option>
+              </template>
+            </select>
+          </div>
+          <button class="btn btn-primary" @click="openCreate()">+ New Monitor</button>
+        </div>
+
+        <template x-if="loading">
+          <div class="loading-center"><span class="spinner"></span> Loading...</div>
+        </template>
+
+        <template x-if="!loading && monitors.length === 0">
+          <div class="empty-state">
+            <div class="empty-icon">&#128225;</div>
+            <p>No monitors configured yet</p>
+            <button class="btn btn-primary mt-4" @click="openCreate()">Create First Monitor</button>
+          </div>
+        </template>
+
+        <template x-if="!loading && monitors.length > 0">
+          <div class="card">
+            <div class="table-wrap">
+              <table class="responsive">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Target</th>
+                    <th>Interval</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="m in monitors" :key="m.id">
+                    <tr>
+                      <td data-label="Name">
+                        <strong x-text="m.name"></strong>
+                        <template x-if="m.group_name">
+                          <span class="text-secondary" style="font-size:0.8rem; margin-left:6px" x-text="m.group_name"></span>
+                        </template>
+                      </td>
+                      <td data-label="Type"><span class="badge badge-type" x-text="m.check_type"></span></td>
+                      <td data-label="Target" class="mono truncate" style="max-width:200px" x-text="m.target + (m.port ? ':' + m.port : '')"></td>
+                      <td data-label="Interval" x-text="(m.interval_ms / 1000) + 's'"></td>
+                      <td data-label="Status">
+                        <span class="badge" :class="m.enabled ? 'badge-enabled' : 'badge-disabled'" x-text="m.enabled ? 'enabled' : 'disabled'"></span>
+                      </td>
+                      <td data-label="Actions">
+                        <div class="inline-flex gap-2">
+                          <label class="toggle" @click.stop>
+                            <input type="checkbox" :checked="m.enabled" @change="toggleEnabled(m)">
+                            <span class="toggle-slider"></span>
+                          </label>
+                          <button class="btn-icon" title="Edit" @click="openEdit(m)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                          <button class="btn-icon" title="Delete" @click="confirmDelete(m)" style="color:var(--status-down)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+
+        <!-- Create/Edit Modal -->
+        <template x-if="showModal">
+          <div class="modal-overlay" @click.self="closeModal()">
+            <div class="modal">
+              <div class="modal-header">
+                <h3 x-text="editing ? 'Edit Monitor' : 'New Monitor'"></h3>
+                <button class="btn-icon" @click="closeModal()">&times;</button>
+              </div>
+              <div class="modal-body">
+                <template x-if="formError">
+                  <div class="alert-banner danger" style="margin-bottom:16px" x-text="formError"></div>
+                </template>
+                <div class="form-group">
+                  <label>Name</label>
+                  <input class="form-control" type="text" x-model="form.name" placeholder="My HTTP Check">
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Check Type</label>
+                    <select class="form-control" x-model="form.check_type">
+                      <option value="icmp">ICMP Ping</option>
+                      <option value="tcp">TCP Port</option>
+                      <option value="http">HTTP</option>
+                      <option value="https">HTTPS</option>
+                      <option value="dns">DNS</option>
+                      <option value="http_keyword">HTTP Keyword</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Group</label>
+                    <input class="form-control" type="text" x-model="form.group_name" placeholder="optional">
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>Target</label>
+                  <input class="form-control" type="text" x-model="form.target" placeholder="example.com or 1.2.3.4">
+                </div>
+                <template x-if="needsPort()">
+                  <div class="form-group">
+                    <label>Port</label>
+                    <input class="form-control" type="number" x-model="form.port" placeholder="80">
+                  </div>
+                </template>
+                <template x-if="needsExpectedStatus()">
+                  <div class="form-group">
+                    <label>Expected Status Code</label>
+                    <input class="form-control" type="number" x-model="form.expected_status" placeholder="200">
+                  </div>
+                </template>
+                <template x-if="needsKeyword()">
+                  <div class="form-group">
+                    <label>Expected Keyword</label>
+                    <input class="form-control" type="text" x-model="form.expected_keyword" placeholder="OK">
+                  </div>
+                </template>
+                <template x-if="needsDNS()">
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label>DNS Record Type</label>
+                      <select class="form-control" x-model="form.dns_record_type">
+                        <option value="A">A</option>
+                        <option value="AAAA">AAAA</option>
+                        <option value="CNAME">CNAME</option>
+                        <option value="MX">MX</option>
+                        <option value="TXT">TXT</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Expected Result</label>
+                      <input class="form-control" type="text" x-model="form.dns_expected" placeholder="1.2.3.4">
+                    </div>
+                  </div>
+                </template>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Interval (ms)</label>
+                    <input class="form-control" type="number" x-model="form.interval_ms">
+                  </div>
+                  <div class="form-group">
+                    <label>Timeout (ms)</label>
+                    <input class="form-control" type="number" x-model="form.timeout_ms">
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Retries</label>
+                    <input class="form-control" type="number" x-model="form.retries" min="0">
+                  </div>
+                  <div class="form-group">
+                    <label>Failure Threshold</label>
+                    <input class="form-control" type="number" x-model="form.failure_threshold" min="1">
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Recovery Threshold</label>
+                    <input class="form-control" type="number" x-model="form.recovery_threshold" min="1">
+                  </div>
+                  <div class="form-group" style="display:flex; align-items:end; padding-bottom:4px">
+                    <label class="form-check">
+                      <input type="checkbox" x-model="form.enabled">
+                      <span>Enabled</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="closeModal()">Cancel</button>
+                <button class="btn btn-primary" @click="save()" :disabled="saving" x-text="saving ? 'Saving...' : (editing ? 'Update' : 'Create')"></button>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Delete Confirm Modal -->
+        <template x-if="showDeleteConfirm">
+          <div class="modal-overlay" @click.self="showDeleteConfirm = false">
+            <div class="modal" style="max-width:400px">
+              <div class="modal-header">
+                <h3>Delete Monitor</h3>
+                <button class="btn-icon" @click="showDeleteConfirm = false">&times;</button>
+              </div>
+              <div class="confirm-body">
+                <p>Delete monitor <strong x-text="deleteTarget?.name"></strong>?</p>
+                <p class="confirm-warn">This action cannot be undone.</p>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showDeleteConfirm = false">Cancel</button>
+                <button class="btn btn-danger" @click="doDelete()">Delete</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ═══════════════ NODES ═══════════════ -->
+      <div x-show="$store.app.page === 'nodes'" x-data="nodesPage()" x-init="init()" x-effect="if ($store.app.page !== 'nodes') destroy()">
+        <div class="page-header">
+          <h2>Nodes</h2>
+          <p class="text-secondary">Cluster members</p>
+        </div>
+
+        <template x-if="loading">
+          <div class="loading-center"><span class="spinner"></span> Loading...</div>
+        </template>
+
+        <template x-if="!loading && nodes.length === 0">
+          <div class="empty-state">
+            <div class="empty-icon">&#128421;</div>
+            <p>No nodes in the cluster</p>
+          </div>
+        </template>
+
+        <template x-if="!loading && nodes.length > 0">
+          <div class="grid-cards">
+            <template x-for="node in nodes" :key="node.id">
+              <div class="card">
+                <div class="flex-between">
+                  <div>
+                    <strong x-text="node.name" style="font-size:1.05rem"></strong>
+                    <span class="badge" :class="'badge-' + node.role" x-text="node.role" style="margin-left:8px"></span>
+                  </div>
+                  <span class="badge" :class="'badge-' + node.status" x-text="node.status"></span>
+                </div>
+                <div class="text-secondary" style="margin-top:10px; font-size:0.85rem">
+                  <div><strong>Address:</strong> <span class="mono" x-text="node.address || '—'"></span></div>
+                  <template x-if="node.location">
+                    <div><strong>Location:</strong> <span x-text="node.location"></span></div>
+                  </template>
+                  <div><strong>ID:</strong> <span class="mono" x-text="node.id.substring(0,12) + '...'"></span></div>
+                  <div><strong>Last seen:</strong> <span x-text="relativeTime(node.last_seen)"></span></div>
+                  <div><strong>Joined:</strong> <span x-text="formatTs(node.created_at)"></span></div>
+                </div>
+                <div style="margin-top:12px; text-align:right">
+                  <button class="btn btn-danger btn-sm" @click="confirmDelete(node)">Remove</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- Delete Confirm Modal -->
+        <template x-if="showDeleteConfirm">
+          <div class="modal-overlay" @click.self="showDeleteConfirm = false">
+            <div class="modal" style="max-width:400px">
+              <div class="modal-header">
+                <h3>Remove Node</h3>
+                <button class="btn-icon" @click="showDeleteConfirm = false">&times;</button>
+              </div>
+              <div class="confirm-body">
+                <p>Remove node <strong x-text="deleteTarget?.name"></strong> from the cluster?</p>
+                <p class="confirm-warn">This action cannot be undone.</p>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-secondary" @click="showDeleteConfirm = false">Cancel</button>
+                <button class="btn btn-danger" @click="doDelete()">Remove</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ═══════════════ INCIDENTS ═══════════════ -->
+      <div x-show="$store.app.page === 'incidents'" x-data="incidentsPage()" x-init="init()" x-effect="if ($store.app.page !== 'incidents') destroy()">
+        <div class="page-header">
+          <h2>Incidents</h2>
+          <p class="text-secondary">Detected outages and alerts</p>
+        </div>
+
+        <div class="toolbar">
+          <div class="tab-toggle">
+            <button :class="{ active: activeOnly }" @click="setFilter(true)">Active</button>
+            <button :class="{ active: !activeOnly }" @click="setFilter(false)">All</button>
+          </div>
+        </div>
+
+        <template x-if="loading">
+          <div class="loading-center"><span class="spinner"></span> Loading...</div>
+        </template>
+
+        <template x-if="!loading && incidents.length === 0">
+          <div class="empty-state">
+            <div class="empty-icon">&#9989;</div>
+            <p x-text="activeOnly ? 'No active incidents' : 'No incidents recorded'"></p>
+          </div>
+        </template>
+
+        <template x-if="!loading && incidents.length > 0">
+          <div class="grid-cards">
+            <template x-for="inc in incidents" :key="inc.id">
+              <div class="card">
+                <div class="flex-between">
+                  <strong x-text="monitorName(inc.monitor_id)"></strong>
+                  <span class="badge" :class="'badge-' + inc.status" x-text="inc.status"></span>
+                </div>
+                <div class="text-secondary" style="margin-top:10px; font-size:0.85rem">
+                  <div><strong>Started:</strong> <span x-text="formatTs(inc.started_at)"></span></div>
+                  <template x-if="inc.confirmed_at">
+                    <div><strong>Confirmed:</strong> <span x-text="formatTs(inc.confirmed_at)"></span></div>
+                  </template>
+                  <template x-if="inc.resolved_at">
+                    <div><strong>Resolved:</strong> <span x-text="formatTs(inc.resolved_at)"></span></div>
+                  </template>
+                  <template x-if="inc.confirming_nodes?.length > 0">
+                    <div><strong>Confirming nodes:</strong> <span x-text="inc.confirming_nodes.length"></span></div>
+                  </template>
+                  <div class="mono" style="margin-top:4px; font-size:0.75rem; color:var(--text-muted)" x-text="'ID: ' + inc.id.substring(0,12) + '...'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- ═══════════════ HISTORY ═══════════════ -->
+      <div x-show="$store.app.page === 'history'" x-data="historyPage()" x-init="init()" x-effect="if ($store.app.page !== 'history') destroy()">
+        <div class="page-header">
+          <h2>History</h2>
+          <p class="text-secondary">Check result history</p>
+        </div>
+
+        <div class="filter-bar">
+          <div class="form-group">
+            <label>Monitor</label>
+            <select class="form-control" x-model="filterMonitor" @change="applyFilters()" style="min-width:160px">
+              <option value="">All Monitors</option>
+              <template x-for="m in monitors" :key="m.id">
+                <option :value="m.id" x-text="m.name"></option>
+              </template>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Node</label>
+            <select class="form-control" x-model="filterNode" @change="applyFilters()" style="min-width:160px">
+              <option value="">All Nodes</option>
+              <template x-for="n in nodes" :key="n.id">
+                <option :value="n.id" x-text="n.name"></option>
+              </template>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Limit</label>
+            <select class="form-control" x-model="filterLimit" @change="applyFilters()" style="width:auto">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </div>
+        </div>
+
+        <template x-if="loading">
+          <div class="loading-center"><span class="spinner"></span> Loading...</div>
+        </template>
+
+        <template x-if="!loading && results.length === 0">
+          <div class="empty-state">
+            <div class="empty-icon">&#128202;</div>
+            <p>No check results yet</p>
+          </div>
+        </template>
+
+        <template x-if="!loading && results.length > 0">
+          <div>
+            <div class="card">
+              <div class="table-wrap">
+                <table class="responsive">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Monitor</th>
+                      <th>Node</th>
+                      <th>Status</th>
+                      <th>Latency</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="r in results" :key="r.id">
+                      <tr>
+                        <td data-label="Time" x-text="formatTs(r.timestamp)"></td>
+                        <td data-label="Monitor" x-text="monitorName(r.monitor_id)"></td>
+                        <td data-label="Node" class="mono" x-text="r.node_id.substring(0,8) + '...'"></td>
+                        <td data-label="Status"><span class="badge" :class="statusBadgeClass(r.status)" x-text="r.status"></span></td>
+                        <td data-label="Latency" class="mono" :class="latencyClass(r.latency_ms)" x-text="r.latency_ms.toFixed(1) + ' ms'"></td>
+                        <td data-label="Error" class="text-secondary truncate" style="max-width:200px" x-text="r.error || '—'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div style="text-align:center; margin-top:16px">
+              <button class="btn btn-secondary" @click="loadMore()">Load More</button>
+            </div>
+          </div>
+        </template>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Scripts -->
+  <script src="/js/alpine.min.js" defer></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/pages/dashboard.js"></script>
+  <script src="/js/pages/monitors.js"></script>
+  <script src="/js/pages/nodes.js"></script>
+  <script src="/js/pages/incidents.js"></script>
+  <script src="/js/pages/history.js"></script>
+</body>
+</html>
