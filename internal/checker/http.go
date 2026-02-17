@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pingmesh/pingmesh/internal/model"
@@ -28,6 +29,12 @@ func (c *HTTPChecker) Check(ctx context.Context, monitor *model.Monitor) (*Resul
 		scheme = "https"
 	}
 
+	// Strip scheme if user included it in the target (e.g. "https://example.com")
+	target := monitor.Target
+	target = strings.TrimPrefix(target, "https://")
+	target = strings.TrimPrefix(target, "http://")
+	target = strings.TrimRight(target, "/")
+
 	port := monitor.Port
 	if port == 0 {
 		if scheme == "https" {
@@ -37,7 +44,7 @@ func (c *HTTPChecker) Check(ctx context.Context, monitor *model.Monitor) (*Resul
 		}
 	}
 
-	url := fmt.Sprintf("%s://%s:%d", scheme, monitor.Target, port)
+	url := fmt.Sprintf("%s://%s:%d", scheme, target, port)
 
 	client := &http.Client{
 		Timeout: timeout,

@@ -53,10 +53,11 @@ func newAgentCmd() *cobra.Command {
 			// Create agent first so we can pass it as AgentInfo
 			a := agent.New(cfg, st)
 
-			// Start API server with log buffer and agent info
+			// Start API server with log buffer, agent info, and alert dispatcher
 			apiServer := api.NewServer(cfg, st,
 				api.WithLogBuffer(logBuf),
 				api.WithAgentInfo(a),
+				api.WithAlertDispatcher(a.Alerter()),
 			)
 			go func() {
 				if err := apiServer.StartCLI(ctx); err != nil {

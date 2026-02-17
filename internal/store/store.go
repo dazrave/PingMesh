@@ -40,6 +40,18 @@ type Store interface {
 	StoreJoinToken(tokenHash string, expiresAt int64) error
 	ValidateAndConsumeToken(tokenHash string) (bool, error)
 
+	// Alert channel operations
+	CreateAlertChannel(ch *model.AlertChannel) error
+	GetAlertChannel(id string) (*model.AlertChannel, error)
+	ListAlertChannels() ([]model.AlertChannel, error)
+	ListEnabledAlertChannels() ([]model.AlertChannel, error)
+	UpdateAlertChannel(ch *model.AlertChannel) error
+	DeleteAlertChannel(id string) error
+
+	// Alert history operations
+	InsertAlertRecord(rec *model.AlertRecord) error
+	ListAlertHistory(channelID string, limit int) ([]model.AlertRecord, error)
+
 	// Lifecycle
 	Close() error
 }

@@ -22,12 +22,18 @@ func (c *KeywordChecker) Type() model.CheckType {
 func (c *KeywordChecker) Check(ctx context.Context, monitor *model.Monitor) (*Result, error) {
 	timeout := time.Duration(monitor.TimeoutMS) * time.Millisecond
 
+	// Strip scheme if user included it in the target
+	target := monitor.Target
+	target = strings.TrimPrefix(target, "https://")
+	target = strings.TrimPrefix(target, "http://")
+	target = strings.TrimRight(target, "/")
+
 	port := monitor.Port
 	if port == 0 {
 		port = 80
 	}
 
-	url := fmt.Sprintf("http://%s:%d", monitor.Target, port)
+	url := fmt.Sprintf("http://%s:%d", target, port)
 
 	client := &http.Client{
 		Timeout: timeout,

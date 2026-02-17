@@ -107,6 +107,74 @@ type Incident struct {
 	UpdatedAt       int64          `json:"updated_at"`
 }
 
+// AlertChannel defines a notification channel (webhook or email).
+type AlertChannel struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`    // "webhook" or "email"
+	Enabled   bool   `json:"enabled"`
+	Config    string `json:"config"`  // JSON: WebhookConfig or EmailConfig
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+// WebhookConfig holds configuration for a webhook alert channel.
+type WebhookConfig struct {
+	URL    string `json:"url"`
+	Secret string `json:"secret,omitempty"` // HMAC-SHA256 signing key
+}
+
+// EmailConfig holds configuration for an email alert channel.
+type EmailConfig struct {
+	SMTPHost string `json:"smtp_host"`
+	SMTPPort int    `json:"smtp_port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+	TLS      bool   `json:"tls"`
+}
+
+// AlertRecord stores the result of an alert delivery attempt.
+type AlertRecord struct {
+	ID         int64  `json:"id"`
+	ChannelID  string `json:"channel_id"`
+	IncidentID string `json:"incident_id"`
+	MonitorID  string `json:"monitor_id"`
+	EventType  string `json:"event_type"` // "alert" or "recovery"
+	Status     string `json:"status"`     // "success" or "failed"
+	Error      string `json:"error,omitempty"`
+	SentAt     int64  `json:"sent_at"`
+}
+
+// WebhookPayload is the JSON body sent to webhook endpoints.
+type WebhookPayload struct {
+	Event     string         `json:"event"`     // "incident.confirmed" or "incident.resolved"
+	Timestamp string         `json:"timestamp"` // RFC3339
+	Incident  IncidentDetail `json:"incident"`
+	Monitor   MonitorSummary `json:"monitor"`
+}
+
+// IncidentDetail is the incident portion of a webhook payload.
+type IncidentDetail struct {
+	ID              string   `json:"id"`
+	Status          string   `json:"status"`
+	StartedAt       string   `json:"started_at"`
+	ConfirmedAt     string   `json:"confirmed_at,omitempty"`
+	ResolvedAt      string   `json:"resolved_at,omitempty"`
+	ConfirmingNodes []string `json:"confirming_nodes"`
+	DurationSec     int64    `json:"duration_sec"`
+}
+
+// MonitorSummary is the monitor portion of a webhook payload.
+type MonitorSummary struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CheckType string `json:"check_type"`
+	Target    string `json:"target"`
+	Group     string `json:"group"`
+}
+
 // PeerCheckRequest is sent to ask a peer node to run a check.
 type PeerCheckRequest struct {
 	RequestID   string `json:"request_id"`

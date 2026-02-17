@@ -441,6 +441,135 @@ func (s *SQLiteStore) ValidateAndConsumeToken(tokenHash string) (bool, error) {
 	return rows > 0, nil
 }
 
+// --- Alert channel operations ---
+
+func (s *SQLiteStore) CreateAlertChannel(ch *model.AlertChannel) error {
+	_, err := s.db.Exec(
+		`INSERT INTO alert_channels (id, name, type, enabled, config, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		ch.ID, ch.Name, ch.Type, boolToInt(ch.Enabled), ch.Config, ch.CreatedAt, ch.UpdatedAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetAlertChannel(id string) (*model.AlertChannel, error) {
+	row := s.db.QueryRow(
+		`SELECT id, name, type, enabled, config, created_at, updated_at FROM alert_channels WHERE id = ?`, id)
+	return scanAlertChannel(row)
+}
+
+func (s *SQLiteStore) ListAlertChannels() ([]model.AlertChannel, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, type, enabled, config, created_at, updated_at FROM alert_channels ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []model.AlertChannel
+	for rows.Next() {
+		ch, err := scanAlertChannel(rows)
+		if err != nil {
+			return nil, err
+		}
+		channels = append(channels, *ch)
+	}
+	return channels, rows.Err()
+}
+
+func (s *SQLiteStore) ListEnabledAlertChannels() ([]model.AlertChannel, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, type, enabled, config, created_at, updated_at FROM alert_channels WHERE enabled = 1 ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []model.AlertChannel
+	for rows.Next() {
+		ch, err := scanAlertChannel(rows)
+		if err != nil {
+			return nil, err
+		}
+		channels = append(channels, *ch)
+	}
+	return channels, rows.Err()
+}
+
+func (s *SQLiteStore) UpdateAlertChannel(ch *model.AlertChannel) error {
+	_, err := s.db.Exec(
+		`UPDATE alert_channels SET name = ?, type = ?, enabled = ?, config = ?, updated_at = ? WHERE id = ?`,
+		ch.Name, ch.Type, boolToInt(ch.Enabled), ch.Config, ch.UpdatedAt, ch.ID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) DeleteAlertChannel(id string) error {
+	_, err := s.db.Exec(`DELETE FROM alert_channels WHERE id = ?`, id)
+	return err
+}
+
+// --- Alert history operations ---
+
+func (s *SQLiteStore) InsertAlertRecord(rec *model.AlertRecord) error {
+	_, err := s.db.Exec(
+		`INSERT INTO alert_history (channel_id, incident_id, monitor_id, event_type, status, error, sent_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		rec.ChannelID, rec.IncidentID, rec.MonitorID, rec.EventType, rec.Status,
+		nullString(rec.Error), rec.SentAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListAlertHistory(channelID string, limit int) ([]model.AlertRecord, error) {
+	query := `SELECT id, channel_id, incident_id, monitor_id, event_type, status, error, sent_at FROM alert_history`
+	var args []any
+
+	if channelID != "" {
+		query += ` WHERE channel_id = ?`
+		args = append(args, channelID)
+	}
+	query += ` ORDER BY sent_at DESC`
+	if limit > 0 {
+		query += fmt.Sprintf(` LIMIT %d`, limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []model.AlertRecord
+	for rows.Next() {
+		var rec model.AlertRecord
+		var errStr sql.NullString
+		if err := rows.Scan(&rec.ID, &rec.ChannelID, &rec.IncidentID, &rec.MonitorID,
+			&rec.EventType, &rec.Status, &errStr, &rec.SentAt); err != nil {
+			return nil, err
+		}
+		if errStr.Valid {
+			rec.Error = errStr.String
+		}
+		records = append(records, rec)
+	}
+	return records, rows.Err()
+}
+
+func scanAlertChannel(row scannable) (*model.AlertChannel, error) {
+	var ch model.AlertChannel
+	var enabled int
+	err := row.Scan(&ch.ID, &ch.Name, &ch.Type, &enabled, &ch.Config, &ch.CreatedAt, &ch.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ch.Enabled = enabled == 1
+	return &ch, nil
+}
+
 // --- Helper functions ---
 
 type scannable interface {

@@ -83,6 +83,8 @@ tags:
     description: View and manage cluster nodes
   - name: Status
     description: Cluster status overview and incident tracking
+  - name: Alerts
+    description: Alert channel management and delivery history
   - name: Health
     description: Node health, diagnostics, and peer connectivity
   - name: Logs
@@ -388,6 +390,189 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  # ─── Alert Channels ──────────────────────────────────────────────────
+
+  /api/v1/alerts/channels:
+    get:
+      tags: [Alerts]
+      summary: List alert channels
+      description: Returns all configured alert channels (webhook and email).
+      operationId: listAlertChannels
+      responses:
+        "200":
+          description: Array of alert channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AlertChannel"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      tags: [Alerts]
+      summary: Create an alert channel
+      description: |
+        Creates a new alert channel. The `config` field must be a JSON string
+        containing either a WebhookConfig or EmailConfig depending on `type`.
+      operationId: createAlertChannel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertChannelCreate"
+            examples:
+              webhook:
+                summary: Webhook channel
+                value:
+                  name: "Slack Alerts"
+                  type: "webhook"
+                  config: '{"url":"https://hooks.slack.com/services/...","secret":""}'
+              email:
+                summary: Email channel
+                value:
+                  name: "Ops Team"
+                  type: "email"
+                  config: '{"smtp_host":"smtp.gmail.com","smtp_port":587,"username":"alerts@co.com","password":"app-pwd","from":"alerts@co.com","to":"ops@co.com","tls":true}'
+      responses:
+        "201":
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/alerts/channels/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AlertChannelId"
+
+    get:
+      tags: [Alerts]
+      summary: Get an alert channel
+      operationId: getAlertChannel
+      responses:
+        "200":
+          description: Channel details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannel"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    put:
+      tags: [Alerts]
+      summary: Update an alert channel
+      description: Update channel name, config, or enabled status.
+      operationId: updateAlertChannel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertChannelUpdate"
+      responses:
+        "200":
+          description: Updated channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      tags: [Alerts]
+      summary: Delete an alert channel
+      description: Deletes the channel and all associated delivery history (CASCADE).
+      operationId: deleteAlertChannel
+      responses:
+        "200":
+          description: Channel deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: deleted
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/alerts/channels/{id}/test:
+    parameters:
+      - $ref: "#/components/parameters/AlertChannelId"
+
+    post:
+      tags: [Alerts]
+      summary: Send a test alert
+      description: |
+        Sends a synthetic test alert through the specified channel.
+        The result is recorded in alert history with event_type "test".
+      operationId: testAlertChannel
+      responses:
+        "200":
+          description: Test sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: sent
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Alert dispatcher not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/alerts/history:
+    get:
+      tags: [Alerts]
+      summary: Alert delivery history
+      description: |
+        Returns alert delivery records (success and failure) ordered newest-first.
+        Optionally filter by channel ID and limit results.
+      operationId: listAlertHistory
+      parameters:
+        - name: channel
+          in: query
+          description: Filter by channel ID
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum records to return
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+          example: 100
+      responses:
+        "200":
+          description: Array of alert records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AlertRecord"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   # ─── Health & Diagnostics ──────────────────────────────────────────────
 
   /api/v1/health:
@@ -496,6 +681,16 @@ components:
         type: string
         format: uuid
       example: "39b4b59b-437c-4644-8a6a-c8868c42f229"
+
+    AlertChannelId:
+      name: id
+      in: path
+      required: true
+      description: Alert channel UUID
+      schema:
+        type: string
+        format: uuid
+      example: "c5e8f3a1-2b4d-4e6f-8a0c-1d3e5f7a9b0c"
 
   responses:
     BadRequest:
@@ -980,6 +1175,100 @@ components:
           type: string
           description: Log message content
           example: "[check] Google HTTP → up (66.4ms)"
+
+    # ── Alert Channels ─────────────────────────────────────────────────────
+
+    AlertChannel:
+      type: object
+      description: A notification channel (webhook or email)
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier (server-generated)
+        name:
+          type: string
+          description: Human-readable name
+          example: "Slack Alerts"
+        type:
+          type: string
+          enum: [webhook, email]
+          description: Channel type
+          example: "webhook"
+        enabled:
+          type: boolean
+          description: Whether this channel is active
+          example: true
+        config:
+          type: string
+          description: JSON string containing WebhookConfig or EmailConfig
+          example: '{"url":"https://hooks.slack.com/services/..."}'
+        created_at:
+          type: integer
+          format: int64
+          description: Creation timestamp (Unix milliseconds)
+        updated_at:
+          type: integer
+          format: int64
+          description: Last update timestamp (Unix milliseconds)
+
+    AlertChannelCreate:
+      type: object
+      required: [name, type, config]
+      properties:
+        name:
+          type: string
+          example: "Slack Alerts"
+        type:
+          type: string
+          enum: [webhook, email]
+        config:
+          type: string
+          description: JSON config string
+
+    AlertChannelUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        config:
+          type: string
+          description: JSON config string (must be valid JSON)
+
+    AlertRecord:
+      type: object
+      description: Record of an alert delivery attempt
+      properties:
+        id:
+          type: integer
+          format: int64
+        channel_id:
+          type: string
+          format: uuid
+        incident_id:
+          type: string
+        monitor_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+          enum: [alert, recovery, test]
+          description: Type of alert event
+          example: "alert"
+        status:
+          type: string
+          enum: [success, failed]
+          description: Delivery status
+          example: "success"
+        error:
+          type: string
+          description: Error message if delivery failed
+        sent_at:
+          type: integer
+          format: int64
+          description: When the alert was sent (Unix milliseconds)
 
     # ── Common ────────────────────────────────────────────────────────────
 

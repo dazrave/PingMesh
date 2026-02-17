@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -41,6 +42,15 @@ func (s *Server) registerCLIRoutes(mux *http.ServeMux) {
 
 	// Peer connectivity test
 	mux.HandleFunc("GET /api/v1/test-peer", s.handleTestPeer)
+
+	// Alert channel endpoints
+	mux.HandleFunc("GET /api/v1/alerts/channels", s.handleListAlertChannels)
+	mux.HandleFunc("POST /api/v1/alerts/channels", s.handleCreateAlertChannel)
+	mux.HandleFunc("GET /api/v1/alerts/channels/{id}", s.handleGetAlertChannel)
+	mux.HandleFunc("PUT /api/v1/alerts/channels/{id}", s.handleUpdateAlertChannel)
+	mux.HandleFunc("DELETE /api/v1/alerts/channels/{id}", s.handleDeleteAlertChannel)
+	mux.HandleFunc("POST /api/v1/alerts/channels/{id}/test", s.handleTestAlertChannel)
+	mux.HandleFunc("GET /api/v1/alerts/history", s.handleAlertHistory)
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +344,159 @@ func (s *Server) handleTestPeer(w http.ResponseWriter, r *http.Request) {
 	filterNode := r.URL.Query().Get("node")
 	peers := s.probePeers(filterNode)
 	writeJSON(w, http.StatusOK, peers)
+}
+
+// --- Alert channel handlers ---
+
+func (s *Server) handleListAlertChannels(w http.ResponseWriter, r *http.Request) {
+	channels, err := s.store.ListAlertChannels()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if channels == nil {
+		channels = []model.AlertChannel{}
+	}
+	writeJSON(w, http.StatusOK, channels)
+}
+
+func (s *Server) handleCreateAlertChannel(w http.ResponseWriter, r *http.Request) {
+	var ch model.AlertChannel
+	if err := readJSON(r, &ch); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if ch.Name == "" || ch.Type == "" {
+		writeError(w, http.StatusBadRequest, "name and type are required")
+		return
+	}
+	if ch.Type != "webhook" && ch.Type != "email" {
+		writeError(w, http.StatusBadRequest, "type must be 'webhook' or 'email'")
+		return
+	}
+
+	// Validate config JSON
+	if ch.Config == "" {
+		ch.Config = "{}"
+	}
+	if !json.Valid([]byte(ch.Config)) {
+		writeError(w, http.StatusBadRequest, "config must be valid JSON")
+		return
+	}
+
+	now := time.Now().UnixMilli()
+	ch.ID = uuid.New().String()
+	ch.Enabled = true
+	ch.CreatedAt = now
+	ch.UpdatedAt = now
+
+	if err := s.store.CreateAlertChannel(&ch); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, ch)
+}
+
+func (s *Server) handleGetAlertChannel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ch, err := s.store.GetAlertChannel(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if ch == nil {
+		writeError(w, http.StatusNotFound, "alert channel not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, ch)
+}
+
+func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	existing, err := s.store.GetAlertChannel(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if existing == nil {
+		writeError(w, http.StatusNotFound, "alert channel not found")
+		return
+	}
+
+	var updates model.AlertChannel
+	if err := readJSON(r, &updates); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if updates.Name != "" {
+		existing.Name = updates.Name
+	}
+	if updates.Config != "" {
+		if !json.Valid([]byte(updates.Config)) {
+			writeError(w, http.StatusBadRequest, "config must be valid JSON")
+			return
+		}
+		existing.Config = updates.Config
+	}
+	// Allow toggling enabled (check if field was explicitly provided)
+	existing.Enabled = updates.Enabled
+	existing.UpdatedAt = time.Now().UnixMilli()
+
+	if err := s.store.UpdateAlertChannel(existing); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, existing)
+}
+
+func (s *Server) handleDeleteAlertChannel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.store.DeleteAlertChannel(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleTestAlertChannel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	if s.alertDispatcher == nil {
+		writeError(w, http.StatusServiceUnavailable, "alert dispatcher not available")
+		return
+	}
+
+	if err := s.alertDispatcher.SendTest(id); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("test failed: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+func (s *Server) handleAlertHistory(w http.ResponseWriter, r *http.Request) {
+	channelID := r.URL.Query().Get("channel")
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+
+	records, err := s.store.ListAlertHistory(channelID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if records == nil {
+		records = []model.AlertRecord{}
+	}
+	writeJSON(w, http.StatusOK, records)
 }
 
 // probePeers TCP-dials each peer and returns reachability status.

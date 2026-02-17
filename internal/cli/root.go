@@ -33,6 +33,7 @@ func NewRootCmd() *cobra.Command {
 		newHealthCmd(),
 		newLogsCmd(),
 		newTestPeerCmd(),
+		newAlertCmd(),
 		newAgentCmd(),
 	)
 

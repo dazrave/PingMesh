@@ -74,6 +74,30 @@ CREATE TABLE IF NOT EXISTS join_tokens (
     created_at  INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS alert_channels (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    config     TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id  TEXT NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
+    incident_id TEXT NOT NULL,
+    monitor_id  TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    error       TEXT,
+    sent_at     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_history_channel ON alert_history(channel_id);
+CREATE INDEX IF NOT EXISTS idx_alert_history_sent ON alert_history(sent_at);
+
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
 );

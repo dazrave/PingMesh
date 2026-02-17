@@ -24,6 +24,11 @@ type AgentInfo interface {
 	ActiveMonitors() int
 }
 
+// AlertDispatcher sends alerts and test notifications.
+type AlertDispatcher interface {
+	SendTest(channelID string) error
+}
+
 // ServerOption configures the Server.
 type ServerOption func(*Server)
 
@@ -37,15 +42,21 @@ func WithAgentInfo(ai AgentInfo) ServerOption {
 	return func(s *Server) { s.agentInfo = ai }
 }
 
+// WithAlertDispatcher attaches an alert dispatcher for test-alert endpoint.
+func WithAlertDispatcher(ad AlertDispatcher) ServerOption {
+	return func(s *Server) { s.alertDispatcher = ad }
+}
+
 // Server provides the HTTP API for both CLI commands and peer communication.
 type Server struct {
 	config     *config.Config
 	store      store.Store
 	clusterMgr *cluster.Manager
-	logBuf     *logbuf.Buffer
-	agentInfo  AgentInfo
-	cliServer  *http.Server
-	peerServer *http.Server
+	logBuf          *logbuf.Buffer
+	agentInfo       AgentInfo
+	alertDispatcher AlertDispatcher
+	cliServer       *http.Server
+	peerServer      *http.Server
 }
 
 // NewServer creates a new API server.

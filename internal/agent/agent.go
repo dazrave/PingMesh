@@ -40,7 +40,7 @@ func New(cfg *config.Config, st store.Store) *Agent {
 		peerClient:  cluster.NewPeerClient(),
 		clusterMgr:  cluster.NewManager(cfg, st),
 		incidentMgr: consensus.NewIncidentManager(st),
-		alerter:     alert.NewDispatcher(),
+		alerter:     alert.NewDispatcher(st),
 		startTime:   time.Now(),
 	}
 
@@ -422,4 +422,9 @@ func (a *Agent) ActiveMonitors() int {
 // Scheduler returns the agent's scheduler.
 func (a *Agent) Scheduler() *Scheduler {
 	return a.scheduler
+}
+
+// Alerter returns the agent's alert dispatcher.
+func (a *Agent) Alerter() *alert.Dispatcher {
+	return a.alerter
 }
