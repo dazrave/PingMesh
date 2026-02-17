@@ -1,0 +1,27 @@
+[Unit]
+Description=PingMesh Distributed Monitoring Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pingmesh
+Group=pingmesh
+ExecStart=/usr/local/bin/pingmesh agent
+WorkingDirectory=/var/lib/pingmesh
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+# Required for ICMP checks
+AmbientCapabilities=CAP_NET_RAW
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pingmesh
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
