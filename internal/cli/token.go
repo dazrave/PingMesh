@@ -12,6 +12,7 @@ import (
 
 func newJoinTokenCmd() *cobra.Command {
 	var expires string
+	var advertiseAddr string
 
 	cmd := &cobra.Command{
 		Use:   "join-token",
@@ -38,7 +39,13 @@ func newJoinTokenCmd() *cobra.Command {
 			}
 			defer st.Close()
 
-			token, err := cluster.GenerateJoinToken(st, cfg.ListenAddr, expiry)
+			// Use advertise address if provided, otherwise fall back to listen address
+			coordAddr := cfg.ListenAddr
+			if advertiseAddr != "" {
+				coordAddr = advertiseAddr
+			}
+
+			token, err := cluster.GenerateJoinToken(st, coordAddr, expiry)
 			if err != nil {
 				return fmt.Errorf("generating token: %w", err)
 			}
@@ -54,6 +61,7 @@ func newJoinTokenCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&expires, "expires", "1h", "token expiry duration")
+	cmd.Flags().StringVar(&advertiseAddr, "advertise", "", "coordinator address reachable by nodes (default: listen address)")
 
 	return cmd
 }
