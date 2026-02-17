@@ -435,7 +435,7 @@ paths:
                 value:
                   name: "Ops Team"
                   type: "email"
-                  config: '{"smtp_host":"smtp.gmail.com","smtp_port":587,"username":"alerts@co.com","password":"app-pwd","from":"alerts@co.com","to":"ops@co.com","tls":true}'
+                  config: '{"smtp_host":"mail.example.com","smtp_port":587,"username":"user@example.com","password":"<your-password>","from":"alerts@example.com","to":"ops@example.com","tls":true}'
       responses:
         "201":
           description: Channel created
